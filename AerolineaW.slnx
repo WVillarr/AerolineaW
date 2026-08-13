@@ -1,2 +1,8 @@
 <Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AerolineaW.Domain/AerolineaW.Domain.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AerolineaW.Domain.UnitTests/AerolineaW.Domain.UnitTests.csproj" />
+  </Folder>
 </Solution>

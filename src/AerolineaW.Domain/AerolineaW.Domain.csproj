@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>AerolineaW.Domain</RootNamespace>
+    <!--
+      Deliberately no PackageReference here. The domain model expresses business rules
+      through plain C# (guard clauses, exceptions, value objects) so it can be unit
+      tested without EF Core, ASP.NET Core, or any other framework in the loop.
+    -->
+  </PropertyGroup>
+
+</Project>
