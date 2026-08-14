@@ -91,9 +91,18 @@ dotnet_naming_style.pascal.capitalization = pascal_case
 # --- analyzer severities worth failing the build on ---
 dotnet_diagnostic.CA2007.severity = none          # ConfigureAwait not needed in ASP.NET Core
 dotnet_diagnostic.CA1848.severity = none          # LoggerMessage delegates: overkill here
+dotnet_diagnostic.CA1873.severity = none          # same call: argument-eval cost of a startup/seed log line is noise
 dotnet_diagnostic.IDE0058.severity = none         # unused expression value
 
 [tests/**/*.cs]
 # Tests name methods as Method_Scenario_Expectation, which trips the naming rule.
 dotnet_naming_rule.public_members_pascal.severity = none
 dotnet_diagnostic.CA1707.severity = none
+
+[**/Migrations/*.cs]
+# EF-generated: dotnet ef regenerates these on every migration, so hand-fixing style here
+# would just be overwritten. generated_code=true is the documented opt-out Roslyn analyzers
+# check; the two rules below are silenced explicitly since not every analyzer honors it.
+generated_code = true
+dotnet_diagnostic.IDE0161.severity = none
+dotnet_diagnostic.CA1861.severity = none

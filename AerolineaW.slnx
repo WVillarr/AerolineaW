@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/AerolineaW.Application/AerolineaW.Application.csproj" />
     <Project Path="src/AerolineaW.Domain/AerolineaW.Domain.csproj" />
+    <Project Path="src/AerolineaW.Infrastructure/AerolineaW.Infrastructure.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/AerolineaW.Domain.UnitTests/AerolineaW.Domain.UnitTests.csproj" />
