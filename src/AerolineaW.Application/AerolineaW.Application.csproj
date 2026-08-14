@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>AerolineaW.Application</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Only the provider-agnostic EF Core package: Application defines IApplicationDbContext
+      (DbSet<T> + SaveChangesAsync) so its services can be unit-tested against any provider.
+      SqlServer-specific configuration lives in Infrastructure, which implements this interface.
+    -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="FluentValidation" />
+    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" />
+    <PackageReference Include="Mapster" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../AerolineaW.Domain/AerolineaW.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

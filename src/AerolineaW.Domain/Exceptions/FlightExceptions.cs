@@ -1,4 +1,5 @@
 using AerolineaW.Domain.Common;
+using AerolineaW.Domain.Entities;
 using AerolineaW.Domain.Enums;
 
 namespace AerolineaW.Domain.Exceptions;
@@ -48,5 +49,16 @@ public sealed class InvalidFlightScheduleException()
 /// <summary>The aircraft is not in service and so cannot be assigned to a flight.</summary>
 public sealed class AircraftUnavailableException(string registration, AircraftStatus status)
     : DomainException($"Aircraft {registration} cannot be assigned: it is {status}.")
+{
+}
+
+/// <summary>
+/// The aircraft is already scheduled on another flight that overlaps this one, including
+/// <see cref="Flight.TurnaroundBuffer"/> on both ends. Detected in Application, since it
+/// requires querying every other flight assigned to the aircraft — something the domain
+/// model itself has no way to do — but it is a domain-level rule, so the exception lives here.
+/// </summary>
+public sealed class AircraftScheduleConflictException(int aircraftId)
+    : DomainException($"Aircraft {aircraftId} already has an overlapping flight scheduled.")
 {
 }
