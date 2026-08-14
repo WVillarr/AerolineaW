@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/AerolineaW.Api/AerolineaW.Api.csproj" />
     <Project Path="src/AerolineaW.Application/AerolineaW.Application.csproj" />
     <Project Path="src/AerolineaW.Domain/AerolineaW.Domain.csproj" />
     <Project Path="src/AerolineaW.Infrastructure/AerolineaW.Infrastructure.csproj" />

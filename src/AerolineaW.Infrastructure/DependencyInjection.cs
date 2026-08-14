@@ -13,8 +13,11 @@ public static class DependencyInjection
     public static IServiceCollection AddInfrastructure(
         this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
-        var connectionString = configuration.GetConnectionString("AirlineDatabase")
-            ?? throw new InvalidOperationException("Connection string 'AirlineDatabase' is not configured.");
+        var connectionString = configuration.GetConnectionString("AirlineDatabase");
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new InvalidOperationException("Connection string 'AirlineDatabase' is not configured.");
+        }
 
         services.AddDbContext<AirlineDbContext>(options =>
             options.UseSqlServer(connectionString, sql => sql.EnableRetryOnFailure()));
