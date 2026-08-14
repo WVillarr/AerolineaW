@@ -6,6 +6,7 @@
     <Project Path="src/AerolineaW.Infrastructure/AerolineaW.Infrastructure.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/AerolineaW.Api.IntegrationTests/AerolineaW.Api.IntegrationTests.csproj" />
     <Project Path="tests/AerolineaW.Domain.UnitTests/AerolineaW.Domain.UnitTests.csproj" />
   </Folder>
 </Solution>

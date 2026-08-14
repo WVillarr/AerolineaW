@@ -38,6 +38,14 @@
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.11" />
     <PackageVersion Include="Testcontainers.MsSql" Version="4.13.0" />
+    <!--
+      Transitive override: Testcontainers 4.13.0 still pulls SSH.NET 2025.1.0, which has a
+      known high-severity path-traversal advisory (GHSA-q939-rpr3-3284) in ScpClient.Download.
+      SSH.NET isn't actually exercised by this project — Testcontainers only uses it for the
+      Docker-over-SSH connection mode, which nothing here uses — but pinning the patched
+      version costs nothing and keeps `dotnet restore` clean instead of suppressing the audit.
+    -->
+    <PackageVersion Include="SSH.NET" Version="2026.0.0" />
   </ItemGroup>
 
 </Project>
