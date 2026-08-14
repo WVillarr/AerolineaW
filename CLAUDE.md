@@ -4,97 +4,109 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-ASP.NET Core 7 Web API for an airline / control-tower domain (airplanes, airports, passengers, tickets). Swagger UI is the only client. All user-facing API messages are in Spanish.
-
-## Environment caveat: net7.0 vs installed runtimes
-
-All three projects target `net7.0`, but this machine has only the .NET 8 and 9 runtimes (SDK 9.0.203). Consequences:
-
-- `dotnet build` works (the SDK builds net7.0 fine).
-- **`dotnet run` and `dotnet ef` fail** with "You must install or update .NET to run this application" unless roll-forward is enabled.
-
-Workaround (verified working — runs the app on .NET 8):
-
-```powershell
-$env:DOTNET_ROLL_FORWARD="Major"
-```
-
-Set it once per shell before any `dotnet run` / `dotnet ef` command. The alternative is installing the .NET 7 runtime.
+ASP.NET Core 10 airline operations API — airports, aircraft, flights, bookings. Clean
+Architecture across four projects (`Domain` → `Application` → `Infrastructure`/`Api`). Rewritten
+from an earlier learning-project version; see [README.md](README.md) for the business rules
+table, architecture diagram, and the two deliberate design trade-offs worth knowing before
+touching the code (`Application` referencing `Microsoft.EntityFrameworkCore`, and `Booking`'s
+looser-than-textbook aggregate boundary).
 
 ## Commands
 
-The solution lives at `Src/AerolineaW/AerolineaW.sln`, **not** at the repo root. Run from the repo root:
+The solution file is `AerolineaW.slnx` at the repo root (the newer XML solution format `dotnet
+new sln` defaults to on .NET 10 tooling — not a typo for `.sln`).
 
-```powershell
-dotnet build Src/AerolineaW/AerolineaW.sln
+```bash
+dotnet build
+dotnet test                                          # everything: Domain unit tests + Api integration tests
+dotnet test tests/AerolineaW.Domain.UnitTests         # fast, no external dependencies
+dotnet run --project src/AerolineaW.Api
+dotnet format --verify-no-changes                     # what CI runs; matches .editorconfig
 ```
 
-```powershell
-dotnet run --project Src/AerolineaW/AerolineaW.csproj --launch-profile https
+The integration test project (`tests/AerolineaW.Api.IntegrationTests`) uses Testcontainers and
+needs a working Docker daemon — `dotnet test` on just that project will fail with
+`DockerUnavailableException` if Docker isn't running, which is an environment problem, not a
+code problem. GitHub Actions' `ubuntu-latest` runners have Docker available by default.
+
+EF Core migrations live in `Infrastructure`; `AirlineDbContextFactory`
+(`src/AerolineaW.Infrastructure/Persistence/AirlineDbContextFactory.cs`) is an
+`IDesignTimeDbContextFactory`, so `dotnet ef` commands only need `--project`, not
+`--startup-project`:
+
+```bash
+dotnet ef migrations add <Name> --project src/AerolineaW.Infrastructure/AerolineaW.Infrastructure.csproj --output-dir Persistence/Migrations
 ```
 
-Swagger is at `/swagger` and is registered **only when `ASPNETCORE_ENVIRONMENT=Development`** (set by the launch profiles). Profiles: `http` (5129), `https` (7054/5129), `IIS Express`.
+Migrations are **not** applied by that command against a real database automatically — but they
+*are* applied automatically at app startup in Development (`DemoDataSeeder.StartAsync` calls
+`Database.MigrateAsync()` before seeding), which is a deliberate departure from a more
+production-typical "migrate by hand" policy, made so a fresh clone can `docker compose up` and
+have a working, seeded database with zero manual steps.
 
-EF Core: the `DataBase` context and migrations live in `Infractructure`, but the connection string lives in the API project, so both `--project` and `--startup-project` are required. `Src/AerolineaW/` contains two project files, so pass explicit `.csproj` paths:
+## Environment notes (this machine)
 
-```powershell
-dotnet ef migrations list --project Src/Infractructure/Infractructure.csproj --startup-project Src/AerolineaW/AerolineaW.csproj
-```
-
-```powershell
-dotnet ef database update --project Src/Infractructure/Infractructure.csproj --startup-project Src/AerolineaW/AerolineaW.csproj
-```
-
-Migrations are **not** applied at startup — the database must be updated manually. Only one migration exists: `20230811185019_DB`.
-
-There are no test projects; `dotnet test` finds nothing.
+- .NET SDK 10.0.400 is installed via winget alongside the 8.0/9.0 runtimes that were already
+  present; nothing here needs the old `DOTNET_ROLL_FORWARD` workaround a net7.0-targeting
+  predecessor of this project used to need.
+- SQL Server Express LocalDB (`(localdb)\MSSQLLocalDB`) is available and is what
+  `appsettings.Development.json` points at by default — use it for anything that needs a real
+  SQL Server without spinning up Docker.
+- Docker Desktop does not reliably start in this sandbox (its own logs show it starting and
+  self-terminating within ~9 seconds — consistent with no nested virtualization available here).
+  `docker compose` and the Testcontainers integration suite need an environment where Docker
+  actually works; don't assume this one is that environment without checking `docker info` first.
 
 ## Architecture
 
-Three projects, referenced in a straight line — `AerolineaW` → `Infractructure` → `Domain`. Note the folder/namespace is misspelled `Infractructure` throughout; keep the spelling when adding files.
+```
+src/AerolineaW.Domain/            entities, enums, value objects, domain exceptions — zero package references
+src/AerolineaW.Application/       DTOs (records), one service + FluentValidation validator per aggregate, IApplicationDbContext
+src/AerolineaW.Infrastructure/    AirlineDbContext, EF configurations, migrations, DemoDataSeeder
+src/AerolineaW.Api/               controllers, Program.cs, GlobalExceptionHandler, ValidationFilter
+tests/AerolineaW.Domain.UnitTests/        82 pure unit tests, one rule per test, no mocks
+tests/AerolineaW.Api.IntegrationTests/    WebApplicationFactory<Program> + Testcontainers.MsSql
+```
 
-- **`Domain`** — entities (`Domain.Modelo`), DTOs (`Domain.DTOS`), and *all* service interfaces (`Domain.Interface`). No EF or ASP.NET dependencies beyond FluentValidation.
-- **`Infractructure`** — `DataBase` (the `DbContext`), the service implementations, FluentValidation validators, and Bogus fake-data generators.
-- **`AerolineaW`** — controllers, `Program.cs`, and `Configuration/DependencyInjection.cs`.
+Dependency direction is one-way: `Api` → `Infrastructure`/`Application` → `Domain`. `Domain` has
+no dependencies at all — every business rule (seat capacity, payload limits, status transitions,
+booking/check-in windows) lives in `Flight`/`Booking`'s constructors and methods, not in a
+service layer, and is unit-tested without a database in the loop.
 
-### Request flow
+### Aggregates and the concurrency mechanism
 
-Controller → `IValidationManager` → `I*Services` → `DataBase`. Every controller constructor injects `DataBase`, its `I*Services`, and `IValidationManager`, though `_dbContext` is generally unused in the controller itself.
+`Flight` is the aggregate root for booking: `Booking` is only ever constructed via
+`Flight.Book(...)`, which is where seat-capacity, payload, seat-uniqueness, and the booking-cutoff
+window are all enforced. `Flight.SeatsBooked` is a *stored* counter (not `Bookings.Count`
+computed on read) specifically so every `Book()` call issues an `UPDATE` against the `Flight`
+row — paired with a `rowversion` EF Core concurrency token
+(`FlightConfiguration.cs`), that's what makes two concurrent bookings for the last seat produce a
+real `DbUpdateConcurrencyException` instead of silently overselling. `BookingService.CreateAsync`
+retries up to three times on that exception, clearing the change tracker and re-reading
+everything fresh each attempt — see the comments there before changing the retry logic.
 
-DI registration is centralized in `Src/AerolineaW/Configuration/DependencyInjection.cs` via the `GetDependencyInjections()` extension; the `DbContext` is registered separately in `Program.cs`. A new service or validator must be added there or it will not resolve.
+### Adding a new validated request
 
-### Validation
+FluentValidation validators are auto-discovered via `AddValidatorsFromAssembly` in
+`Application/DependencyInjection.cs` — no manual registration needed, unlike the old project's
+`IValidationManager` facade (removed). Add the validator class in the same file as its DTOs and
+it's picked up automatically; `ValidationFilter` (`Api/Validation/ValidationFilter.cs`) is what
+actually invokes it per-request and turns failures into a `ValidationProblemDetails` 400.
 
-`IValidationManager` / `ValidationManagerService` is a facade that wraps the four `IValidator<TDto>` instances so controllers depend on one interface instead of four. Adding a validated entity means touching all of: the DTO, an `AbstractValidator<TDto>`, a method on `IValidationManager`, and two registrations in `DependencyInjection.cs`.
+### Error handling
 
-`TicketValidation` takes `DataBase` in its constructor and uses the async FK-existence rules in `Validation/CustomValidation.cs` (`CheckPassengerExistAsync` etc.) to confirm referenced rows exist.
-
-Controllers surface errors as `BadRequest(result.Errors.ToStringList())` — `ToStringList()` is the extension in `Validation/ValidationError.cs` that flattens `ValidationFailure` to plain message strings.
-
-### Conventions that look like bugs but are load-bearing
-
-- **Services return Spanish status strings, and controllers branch on those literals.** `DeleteAirplane`, `DeleteTicket`, `DeletePassenger`, `DeleteAirport*` return `"Se elimino correctamente"` or `"Hubo un error"`, and each controller does `if (result != "Hubo un error")` to choose `Ok` vs `BadRequest`. Changing a message string silently changes the HTTP status.
-- **DTO → entity mapping is Mapster** (`dto.Adapt<Entity>()`) with no explicit config; mapping relies on identical property names. `AirplaneServices.MapAirplaneObject` then sets `Status = "En Tierra"` after adapting, since the DTO has no status. `Airplane.Status` transitions to `"En vuelo"` on ticket creation and `"Aterrizó"` in `TicketServices.ModifyTicket`.
-- **Every controller action wraps its body in `try/catch` returning `StatusCode(500, e)`** — the raw exception object is serialized into the response.
-- Newtonsoft is used instead of System.Text.Json specifically for `ReferenceLoopHandling.Ignore`, because `Ticket` has bidirectional navigation properties.
-
-### Airport1 / Airport2 — inconsistent arrival/departure meaning
-
-There are two structurally identical airport entities. Which one means "arrival" is **not consistent** across the codebase:
-
-- `Ticket` maps `AirportArrivalId` → `Airport1` and `AirportDepartureId` → `Airport2`.
-- `AirportServices` treats `Airport1` as **departure** and `Airport2` as **arrival**.
-- `CustomValidation.CheckAirportArrivalAsync` queries `Airport2`; `CheckAiportDepartureAsync` queries `Airport1`.
-- `TicketServices.MapTicketObject` looks up `AirportArrivalId` in `Airport1`.
-
-Check which table a given path actually touches before changing anything here; do not assume the property name.
-
-### Fake data
-
-`GET /Dummy?increment=N` (route is `[controller]` with no `api/` prefix, unlike every other controller) generates N rows per table via Bogus. `DummyController` news up `DummyDataServices` by hand — it is not registered in DI. `FakeSetup.FticketSetup` picks random existing `Passenger`/`Airplane`/`Airport1`/`Airport2` rows, so `DatosDummy` must run its steps in order and those tables must be populated first.
+`GlobalExceptionHandler` (`Api/ErrorHandling/GlobalExceptionHandler.cs`) is the only place an
+exception becomes an HTTP response: `NotFoundException` → 404, any `DomainException` subtype →
+409, an exhausted-retry `DbUpdateConcurrencyException` → 409, `ArgumentException` → 400,
+everything else → 500 with a generic message (logged server-side, never serialized to the
+client). New domain rules should throw a `DomainException` subtype (see
+`Domain/Exceptions/`) rather than a generic exception, so they get mapped correctly without
+touching the handler.
 
 ## Configuration
 
-`Src/AerolineaW/appsettings.json` holds `ConnectionStrings:AirplaneApiConnectionString`, hardcoded to `DESKTOP-OVIVB88\SQLEXPRESS` / database `torredecontrol` with `Trusted_Connection=True`. It must be pointed at a local SQL Server before anything that touches the database will work. `Microsoft.EntityFrameworkCore.InMemory` is referenced but not wired up.
-
-`docker-compose.dcproj` and the Docker launch profiles exist, but there is no `Dockerfile`, `docker-compose.yml`, or `.dockerignore`, and the `.dcproj` is not part of the `.sln` — the Docker path is non-functional.
+`ConnectionStrings:AirlineDatabase` has no value in the base `appsettings.json` on purpose — the
+app throws a clear `InvalidOperationException` at startup if it's missing rather than silently
+falling back to something. `appsettings.Development.json` supplies the LocalDB connection string
+for local dev; `docker-compose.yml` supplies it via the `ConnectionStrings__AirlineDatabase`
+environment variable, sourced from `.env` (gitignored; copy `.env.example`).
