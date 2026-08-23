@@ -40,8 +40,8 @@ public sealed class BookingService(IApplicationDbContext db) : IBookingService
 
     public async Task<BookingResponse> GetByReferenceAsync(string reference, CancellationToken cancellationToken = default)
     {
-        var normalized = new BookingReference(reference).Value;
-        var booking = await BookingQuery().FirstOrDefaultAsync(b => b.Reference.Value == normalized, cancellationToken)
+        var normalized = new BookingReference(reference);
+        var booking = await BookingQuery().FirstOrDefaultAsync(b => b.Reference == normalized, cancellationToken)
             ?? throw new NotFoundException(nameof(Booking), reference);
         return booking.Adapt<BookingResponse>();
     }

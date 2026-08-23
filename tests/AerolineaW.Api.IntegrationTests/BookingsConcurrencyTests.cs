@@ -47,7 +47,8 @@ public sealed class BookingsConcurrencyTests(ApiWebApplicationFactory factory)
         Assert.Equal(seatCapacity, succeeded);
         Assert.Equal(attempts - seatCapacity, rejected);
 
-        var flightAfter = await (await client.GetAsync($"/api/v1/flights/{flight.Id}")).Content.ReadFromJsonAsync<FlightResponse>();
+        var flightAfter = await (await client.GetAsync($"/api/v1/flights/{flight.Id}")).Content
+            .ReadFromJsonAsync<FlightResponse>(TestDataBuilder.JsonOptions);
         Assert.Equal(seatCapacity, flightAfter!.SeatsBooked);
     }
 }

@@ -24,6 +24,8 @@ public sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logge
             // Only reached once BookingService's own retry budget is exhausted — a real,
             // rare loss of a race, not a bug — so it's still a 409, not a 500.
             DbUpdateConcurrencyException => (StatusCodes.Status409Conflict, "Concurrency Conflict"),
+            // Unique and foreign-key constraints represent expected conflicts at the API boundary.
+            DbUpdateException => (StatusCodes.Status409Conflict, "Persistence Conflict"),
 
             ArgumentException => (StatusCodes.Status400BadRequest, "Invalid Input"),
             _ => (StatusCodes.Status500InternalServerError, "Server Error"),

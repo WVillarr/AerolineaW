@@ -98,11 +98,12 @@ public sealed class FlightService(IApplicationDbContext db) : IFlightService
         ApplyAsync(id, f => f.ResumeFromDelay(), cancellationToken);
 
     public Task<FlightResponse> CancelAsync(int id, CancellationToken cancellationToken = default) =>
-        ApplyAsync(id, f => f.Cancel(), cancellationToken);
+        ApplyAsync(id, f => f.Cancel(), cancellationToken, includeBookings: true);
 
-    private async Task<FlightResponse> ApplyAsync(int id, Action<Flight> transition, CancellationToken cancellationToken)
+    private async Task<FlightResponse> ApplyAsync(
+        int id, Action<Flight> transition, CancellationToken cancellationToken, bool includeBookings = false)
     {
-        var flight = await FindAsync(id, cancellationToken);
+        var flight = await FindAsync(id, cancellationToken, includeBookings);
         transition(flight);
         await db.SaveChangesAsync(cancellationToken);
         return flight.Adapt<FlightResponse>();
@@ -121,10 +122,17 @@ public sealed class FlightService(IApplicationDbContext db) : IFlightService
         }
     }
 
-    private IQueryable<Flight> FlightQuery() =>
-        db.Flights.Include(f => f.Aircraft).Include(f => f.OriginAirport).Include(f => f.DestinationAirport);
+    private IQueryable<Flight> FlightQuery(bool includeBookings = false)
+    {
+        var query = db.Flights
+            .Include(f => f.Aircraft)
+            .Include(f => f.OriginAirport)
+            .Include(f => f.DestinationAirport);
 
-    private async Task<Flight> FindAsync(int id, CancellationToken cancellationToken) =>
-        await FlightQuery().FirstOrDefaultAsync(f => f.Id == id, cancellationToken)
+        return includeBookings ? query.Include(f => f.Bookings) : query;
+    }
+
+    private async Task<Flight> FindAsync(int id, CancellationToken cancellationToken, bool includeBookings = false) =>
+        await FlightQuery(includeBookings).FirstOrDefaultAsync(f => f.Id == id, cancellationToken)
             ?? throw new NotFoundException(nameof(Flight), id);
 }

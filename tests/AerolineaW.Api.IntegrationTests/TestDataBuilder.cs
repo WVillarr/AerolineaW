@@ -1,4 +1,6 @@
 using System.Net.Http.Json;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using AerolineaW.Application.Aircraft;
 using AerolineaW.Application.Airports;
 using AerolineaW.Application.Flights;
@@ -15,13 +17,18 @@ namespace AerolineaW.Api.IntegrationTests;
 /// </summary>
 internal static class TestDataBuilder
 {
+    public static JsonSerializerOptions JsonOptions { get; } = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter() },
+    };
+
     public static async Task<AirportResponse> CreateAirportAsync(HttpClient client)
     {
         var code = RandomLetters(3);
         var response = await client.PostAsJsonAsync(
             "/api/v1/airports", new CreateAirportRequest(code, $"{code} Airport", "City", "Country", "America/New_York"));
         response.EnsureSuccessStatusCode();
-        return (await response.Content.ReadFromJsonAsync<AirportResponse>())!;
+        return (await response.Content.ReadFromJsonAsync<AirportResponse>(JsonOptions))!;
     }
 
     public static async Task<AircraftResponse> CreateAircraftAsync(HttpClient client, int seatCapacity = 150, decimal maxPayloadKg = 15_000m)
@@ -30,7 +37,7 @@ internal static class TestDataBuilder
         var response = await client.PostAsJsonAsync(
             "/api/v1/aircraft", new CreateAircraftRequest(registration, "Test Model", seatCapacity, maxPayloadKg));
         response.EnsureSuccessStatusCode();
-        return (await response.Content.ReadFromJsonAsync<AircraftResponse>())!;
+        return (await response.Content.ReadFromJsonAsync<AircraftResponse>(JsonOptions))!;
     }
 
     public static async Task<PassengerResponse> CreatePassengerAsync(HttpClient client)
@@ -40,7 +47,7 @@ internal static class TestDataBuilder
             "/api/v1/passengers",
             new CreatePassengerRequest($"Test Passenger {suffix}", DocumentType.Passport, $"DOC{suffix}", "Country", "+1 555 0100"));
         response.EnsureSuccessStatusCode();
-        return (await response.Content.ReadFromJsonAsync<PassengerResponse>())!;
+        return (await response.Content.ReadFromJsonAsync<PassengerResponse>(JsonOptions))!;
     }
 
     public static async Task<FlightResponse> CreateFlightAsync(
@@ -56,7 +63,7 @@ internal static class TestDataBuilder
 
         var response = await client.PostAsJsonAsync("/api/v1/flights", request);
         response.EnsureSuccessStatusCode();
-        return (await response.Content.ReadFromJsonAsync<FlightResponse>())!;
+        return (await response.Content.ReadFromJsonAsync<FlightResponse>(JsonOptions))!;
     }
 
     private static string RandomLetters(int count) =>

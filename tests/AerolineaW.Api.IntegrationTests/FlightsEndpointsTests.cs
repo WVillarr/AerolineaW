@@ -27,7 +27,7 @@ public sealed class FlightsEndpointsTests(ApiWebApplicationFactory factory)
             $"/api/v1/flights/{flight.Id}/bookings", new CreateBookingRequest(passenger.Id, "1A", 10m, 199m));
         Assert.Equal(HttpStatusCode.Created, bookingResponse.StatusCode);
 
-        var booking = await bookingResponse.Content.ReadFromJsonAsync<BookingResponse>();
+        var booking = await bookingResponse.Content.ReadFromJsonAsync<BookingResponse>(TestDataBuilder.JsonOptions);
         Assert.Equal(BookingStatus.Confirmed, booking!.Status);
 
         var byReference = await _client.GetAsync($"/api/v1/bookings/by-reference/{booking.Reference}");
@@ -84,7 +84,37 @@ public sealed class FlightsEndpointsTests(ApiWebApplicationFactory factory)
         Assert.Equal(HttpStatusCode.OK, (await _client.PostAsync($"/api/v1/flights/{flight.Id}/depart", null)).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await _client.PostAsync($"/api/v1/flights/{flight.Id}/land", null)).StatusCode);
 
-        var landed = await (await _client.GetAsync($"/api/v1/flights/{flight.Id}")).Content.ReadFromJsonAsync<FlightResponse>();
+        var landed = await (await _client.GetAsync($"/api/v1/flights/{flight.Id}")).Content
+            .ReadFromJsonAsync<FlightResponse>(TestDataBuilder.JsonOptions);
         Assert.Equal(FlightStatus.Landed, landed!.Status);
+    }
+
+    [Fact]
+    public async Task CancelFlight_CancelsItsBookings()
+    {
+        var origin = await TestDataBuilder.CreateAirportAsync(_client);
+        var destination = await TestDataBuilder.CreateAirportAsync(_client);
+        var aircraft = await TestDataBuilder.CreateAircraftAsync(_client);
+        var passenger = await TestDataBuilder.CreatePassengerAsync(_client);
+        var flight = await TestDataBuilder.CreateFlightAsync(_client, aircraft.Id, origin.Id, destination.Id, DateTime.UtcNow.AddDays(3));
+
+        var bookingResponse = await _client.PostAsJsonAsync(
+            $"/api/v1/flights/{flight.Id}/bookings", new CreateBookingRequest(passenger.Id, "3C", 10m, 199m));
+        var booking = await bookingResponse.Content.ReadFromJsonAsync<BookingResponse>(TestDataBuilder.JsonOptions);
+
+        var cancelResponse = await _client.PostAsync($"/api/v1/flights/{flight.Id}/cancel", null);
+
+        Assert.Equal(HttpStatusCode.OK, cancelResponse.StatusCode);
+        var cancelled = await (await _client.GetAsync($"/api/v1/bookings/{booking!.Id}"))
+            .Content.ReadFromJsonAsync<BookingResponse>(TestDataBuilder.JsonOptions);
+        Assert.Equal(BookingStatus.Cancelled, cancelled!.Status);
+    }
+
+    [Fact]
+    public async Task GetFlights_InvalidPageSize_ReturnsBadRequest()
+    {
+        var response = await _client.GetAsync("/api/v1/flights?pageSize=0");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 }
