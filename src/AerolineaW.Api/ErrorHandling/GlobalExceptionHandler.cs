@@ -21,11 +21,9 @@ public sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logge
             NotFoundException => (StatusCodes.Status404NotFound, "Not Found"),
             DomainException => (StatusCodes.Status409Conflict, "Business Rule Violation"),
 
-            // Only reached once BookingService's own retry budget is exhausted — a real,
-            // rare loss of a race, not a bug — so it's still a 409, not a 500.
+            // Includes exhausted booking retries and conflicting lifecycle mutations.
             DbUpdateConcurrencyException => (StatusCodes.Status409Conflict, "Concurrency Conflict"),
-            // Unique and foreign-key constraints represent expected conflicts at the API boundary.
-            DbUpdateException => (StatusCodes.Status409Conflict, "Persistence Conflict"),
+            PersistenceConflictException => (StatusCodes.Status409Conflict, "Persistence Conflict"),
 
             ArgumentException => (StatusCodes.Status400BadRequest, "Invalid Input"),
             _ => (StatusCodes.Status500InternalServerError, "Server Error"),
@@ -40,14 +38,17 @@ public sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logge
         {
             Status = statusCode,
             Title = title,
-            Detail = statusCode == StatusCodes.Status500InternalServerError
-                ? "An unexpected error occurred."
-                : exception.Message,
+            Detail = exception switch
+            {
+                DbUpdateConcurrencyException => "The record changed during this operation. Reload it and try again.",
+                _ when statusCode == StatusCodes.Status500InternalServerError => "An unexpected error occurred.",
+                _ => exception.Message,
+            },
             Instance = httpContext.Request.Path,
         };
 
         httpContext.Response.StatusCode = statusCode;
-        await httpContext.Response.WriteAsJsonAsync(problemDetails, cancellationToken);
+        await httpContext.Response.WriteAsJsonAsync(problemDetails, options: null, contentType: "application/problem+json", cancellationToken);
         return true;
     }
 }

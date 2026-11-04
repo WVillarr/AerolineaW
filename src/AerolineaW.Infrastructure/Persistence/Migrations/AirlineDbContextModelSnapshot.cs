@@ -134,6 +134,12 @@ namespace AerolineaW.Infrastructure.Persistence.Migrations
                         .HasMaxLength(6)
                         .HasColumnType("nvarchar(6)");
 
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
                     b.Property<string>("Seat")
                         .IsRequired()
                         .HasMaxLength(4)
@@ -152,7 +158,8 @@ namespace AerolineaW.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.HasIndex("FlightId", "Seat")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("[Status] <> 'Cancelled'");
 
                     b.ToTable("Bookings");
                 });

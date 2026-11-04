@@ -48,7 +48,10 @@ public sealed class FlightService(IApplicationDbContext db) : IFlightService
         return flight.Adapt<FlightResponse>();
     }
 
-    public async Task<FlightResponse> CreateAsync(CreateFlightRequest request, CancellationToken cancellationToken = default)
+    public Task<FlightResponse> CreateAsync(CreateFlightRequest request, CancellationToken cancellationToken = default) =>
+        db.ExecuteSerializableAsync(token => CreateWithinTransactionAsync(request, token), cancellationToken);
+
+    private async Task<FlightResponse> CreateWithinTransactionAsync(CreateFlightRequest request, CancellationToken cancellationToken)
     {
         var aircraft = await db.Aircraft.FirstOrDefaultAsync(a => a.Id == request.AircraftId, cancellationToken)
             ?? throw new NotFoundException(nameof(Aircraft), request.AircraftId);
@@ -68,7 +71,10 @@ public sealed class FlightService(IApplicationDbContext db) : IFlightService
         return flight.Adapt<FlightResponse>();
     }
 
-    public async Task<FlightResponse> AssignAircraftAsync(int id, AssignAircraftRequest request, CancellationToken cancellationToken = default)
+    public Task<FlightResponse> AssignAircraftAsync(int id, AssignAircraftRequest request, CancellationToken cancellationToken = default) =>
+        db.ExecuteSerializableAsync(token => AssignWithinTransactionAsync(id, request, token), cancellationToken);
+
+    private async Task<FlightResponse> AssignWithinTransactionAsync(int id, AssignAircraftRequest request, CancellationToken cancellationToken)
     {
         var flight = await FindAsync(id, cancellationToken);
         var aircraft = await db.Aircraft.FirstOrDefaultAsync(a => a.Id == request.AircraftId, cancellationToken)

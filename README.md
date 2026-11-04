@@ -59,13 +59,15 @@ duplicated across callers.
 | An aircraft can't be assigned while `InMaintenance` or `Retired` | `Flight.AssignAircraft` |
 | An aircraft can't be double-booked — overlapping flights, including a 45-minute turnaround buffer | `FlightService` (needs a query, so it can't live in Domain) |
 | No more bookings than `Aircraft.SeatCapacity` | `Flight.Book` |
-| One seat, one booking | unique index on `(FlightId, Seat)` |
+| One seat, one active booking; cancelled seats can be resold | filtered unique index on `(FlightId, Seat)` |
 | Total baggage can't exceed `Aircraft.MaxPayloadKg` | `Flight.Book` |
 | Bookings close 45 minutes before scheduled departure | `Flight.Book` |
 | Status transitions: `Scheduled → Boarding → InFlight → Landed`, with `Delayed`/`Cancelled` side branches | `Flight.Board/Depart/Land/Delay/Cancel` |
 | Check-in only opens 24h and closes 45 minutes before departure | `Booking.CheckIn` |
 | Cancelling a flight cancels every active booking on it | `Flight.Cancel` |
-| Cancelling a booking releases its seat back to the flight | `Booking.Cancel` |
+| Cancelling before departure releases the seat and baggage; cancellation after departure is rejected | `Booking.Cancel` |
+| Aircraft reassignment must accommodate booked seats and baggage | `Flight.AssignAircraft` |
+| Actual arrival must be after actual departure | `Flight.Land` |
 
 ### The one worth watching: concurrent bookings
 
@@ -77,18 +79,24 @@ request gets `DbUpdateConcurrencyException`, and `BookingService` retries — up
 attempts — by re-reading the flight fresh and re-checking capacity against what's actually
 committed, rather than assuming the original request was wrong.
 
-`BookingsConcurrencyTests.ConcurrentBookings_ExactlySeatCapacitySucceed` fires 12 simultaneous
-booking requests at a 6-seat aircraft and asserts exactly 6 succeed — no fewer (a bug would
-silently drop a valid booking) and no more (a bug would oversell the flight).
+`ConcurrentBookings_NeverOversell_AndRemainingCapacityCanBeSold` fires 12 simultaneous
+requests at a 6-seat aircraft and verifies there is no overselling. Three server attempts may
+exhaust under contention even with seats remaining: that 409 lets the client retry explicitly.
+The test also checks that remaining capacity can still be sold afterward. Additional tests hold
+two independent contexts before saving to exercise races for the same seat and the last seat.
+
+`Booking` also has a `rowversion`: a stale check-in cannot overwrite a committed cancellation.
+Flight creation and aircraft reassignment check availability and save inside a `Serializable`
+transaction, replaying the entire operation through EF Core's execution strategy when needed.
 
 ## Tech stack
 
-- **.NET 10** / ASP.NET Core, C# 13
+- **.NET 10** / ASP.NET Core, C#
 - **EF Core 10** on SQL Server, code-first migrations
 - **FluentValidation** for request-shape validation (empty fields, lengths) — business rules stay in Domain
 - **Mapster** for entity → DTO mapping
 - **Serilog** structured logging, **Asp.Versioning** (`/api/v1/...`), **Swashbuckle** for Swagger
-- **xUnit** — 82 pure unit tests on Domain, plus a **Testcontainers**-backed integration suite against a real (disposable) SQL Server
+- **xUnit** — 91 pure unit tests on Domain, plus a **Testcontainers**-backed integration suite against a real (disposable) SQL Server
 - **Docker Compose** for one-command local startup, **GitHub Actions** CI
 
 ## Quick start
@@ -129,27 +137,61 @@ dotnet test tests/AerolineaW.Domain.UnitTests
 dotnet test
 ```
 
-## API walkthrough
+## Reproducible API walkthrough
 
-```bash
-# Create an airport
-curl -X POST http://localhost:8080/api/v1/airports \
-  -H "Content-Type: application/json" \
-  -d '{"code":"MIA","name":"Miami International","city":"Miami","country":"United States","timeZoneId":"America/New_York"}'
+With Docker Compose running, execute in PowerShell from the repository root:
 
-# Book a seat
-curl -X POST http://localhost:8080/api/v1/flights/1/bookings \
-  -H "Content-Type: application/json" \
-  -d '{"passengerId":1,"seat":"14A","baggageWeightKg":15,"price":249.99}'
-
-# Look a booking up by its 6-character reference — no flight id needed
-curl http://localhost:8080/api/v1/bookings/by-reference/3F9K2X
+```powershell
+./scripts/demo.ps1
 ```
 
-Every business-rule rejection comes back as an [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807)
-`ProblemDetails` body with the right status code (404 not found, 409 business conflict, 400
-validation) — never a raw exception, which is what the original project's
-`catch (Exception e) { return StatusCode(500, e); }` in every controller action used to do.
+For the local HTTP launch profile (`dotnet run --project src/AerolineaW.Api`):
+
+```powershell
+./scripts/demo.ps1 -BaseUrl http://localhost:5129
+```
+
+On Linux/macOS, install PowerShell and run `pwsh -File scripts/demo.ps1`.
+The script uses two seeded airports and creates an aircraft, passenger, and flight departing
+in 12 hours. It books `1A`, looks up the reference returned by the API, checks in, cancels, and
+books that seat again. It verifies history and counters, then returns the actual IDs and
+references of both bookings. Each execution adds its own demonstration data.
+
+Errors use `ProblemDetails`: 400 for validation, 404 for missing resources, and 409 for business
+rules, concurrency, and expected unique-key or foreign-key conflicts. Unexpected persistence
+failures return a generic 500 and are logged server-side.
+
+## Release verification
+
+```bash
+dotnet format --verify-no-changes
+dotnet build --configuration Release
+dotnet test --configuration Release
+```
+
+CI runs both suites with Testcontainers, builds the image, and starts Compose with an empty
+database. It checks `/health`, Swagger, seeded flights, and the same PowerShell walkthrough;
+it collects results and logs before removing only that run's resources. The suite also tests
+upgrading an initial-schema database containing existing bookings.
+
+When Docker is unavailable, an existing SQL Server instance can run the tests:
+
+```powershell
+$env:AEROLINEAW_TEST_SQLSERVER = 'Server=(localdb)\MSSQLLocalDB;Integrated Security=true;TrustServerCertificate=true'
+dotnet test --configuration Release
+Remove-Item Env:AEROLINEAW_TEST_SQLSERVER
+```
+
+Only the supplied server and credentials are used to create disposable databases named
+`AerolineaW_Tests_<guid>` and `AerolineaW_MigrationTests_<guid>`, removed at teardown. The database
+named in the connection string is never the target. The account needs database create/drop
+permissions. This verifies SQL Server integration; it does not verify Docker or Compose.
+
+Incremental migrations run automatically only in Development. Elsewhere, apply them explicitly
+with `dotnet ef database update --project src/AerolineaW.Infrastructure --connection "<connection-string>"`. Rolling back to the
+initial schema requires resolving reused seats first: its original index cannot represent two
+historical bookings for the same seat. History is never deleted automatically.
+Personal Codex skills are not prerequisites for running or verifying this repository.
 
 ## Design decisions worth knowing before reading the code
 
@@ -171,3 +213,8 @@ validation) — never a raw exception, which is what the original project's
 Authentication/authorization was scoped out — every endpoint is open. If this went further,
 JWT with an `Admin` role (manages fleet/flights) and a `Customer` role (books/checks in) would be
 the natural next phase.
+
+This is a backend demonstration without payments or a user interface. Prices are supplied by
+the caller; there is no fare engine. Seats are validated by format and uniqueness, without a
+physical cabin map. Reserved payload models baggage only, not total aircraft operating weight.
+Use fictional data: open endpoints are not a platform for real passengers.

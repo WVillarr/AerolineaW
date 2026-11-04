@@ -25,6 +25,7 @@ public sealed class BookingConfiguration : IEntityTypeConfiguration<Booking>
         builder.Property(b => b.BaggageWeightKg).HasPrecision(10, 2);
         builder.Property(b => b.Price).HasPrecision(10, 2);
         builder.Property(b => b.Status).HasConversion<string>().HasMaxLength(20);
+        builder.Property(b => b.RowVersion).IsRowVersion();
 
         builder.HasOne(b => b.Passenger)
             .WithMany()
@@ -33,6 +34,7 @@ public sealed class BookingConfiguration : IEntityTypeConfiguration<Booking>
 
         // The Flight/FlightId side of this relationship is configured from FlightConfiguration
         // (HasMany(f => f.Bookings)) — EF only needs it declared once.
-        builder.HasIndex(b => new { b.FlightId, b.Seat }).IsUnique();
+        builder.HasIndex(b => new { b.FlightId, b.Seat }).IsUnique()
+            .HasFilter("[Status] <> 'Cancelled'");
     }
 }

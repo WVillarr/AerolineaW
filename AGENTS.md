@@ -64,7 +64,7 @@ src/AerolineaW.Domain/            entities, enums, value objects, domain excepti
 src/AerolineaW.Application/       DTOs (records), one service + FluentValidation validator per aggregate, IApplicationDbContext
 src/AerolineaW.Infrastructure/    AirlineDbContext, EF configurations, migrations, DemoDataSeeder
 src/AerolineaW.Api/               controllers, Program.cs, GlobalExceptionHandler, ValidationFilter
-tests/AerolineaW.Domain.UnitTests/        82 pure unit tests, one rule per test, no mocks
+tests/AerolineaW.Domain.UnitTests/        91 pure unit tests, focused on domain rules, no mocks
 tests/AerolineaW.Api.IntegrationTests/    WebApplicationFactory<Program> + Testcontainers.MsSql
 ```
 
@@ -85,6 +85,20 @@ real `DbUpdateConcurrencyException` instead of silently overselling. `BookingSer
 retries up to three times on that exception, clearing the change tracker and re-reading
 everything fresh each attempt — see the comments there before changing the retry logic.
 
+Three attempts can exhaust under contention even while seats remain. A 409 is retryable by the
+client; the API guarantees no overselling, not that one concurrent wave fills the aircraft.
+Tests force competing reads with a save interceptor rather than depending on sleeps.
+
+`Booking.RowVersion` prevents stale check-ins from overwriting cancellations. The unique index
+on `(FlightId, Seat)` is filtered to exclude `Cancelled`, preserving history while permitting
+seat reuse. Passenger cancellation is allowed only before departure (`Scheduled`, `Delayed`,
+`Boarding`); flight cancellation intentionally preserves its historical seat/payload counters.
+
+Flight creation and aircraft reassignment use `IApplicationDbContext.ExecuteSerializableAsync`
+to include availability reads and writes in one serializable transaction. Infrastructure runs
+the whole operation through EF's execution strategy, clearing tracking on every attempt. Keep
+all entity reads inside that operation; retrying only SaveChanges would reuse stale decisions.
+
 ### Adding a new validated request
 
 FluentValidation validators are auto-discovered via `AddValidatorsFromAssembly` in
@@ -102,6 +116,29 @@ everything else → 500 with a generic message (logged server-side, never serial
 client). New domain rules should throw a `DomainException` subtype (see
 `Domain/Exceptions/`) rather than a generic exception, so they get mapped correctly without
 touching the handler.
+
+Infrastructure translates SQL Server errors 2601/2627 (uniqueness) and 547 (foreign keys) into
+Application's `PersistenceConflictException`, mapped to 409 with a controlled message. Other
+`DbUpdateException` instances remain unexpected 500 errors; never map them all to 409 or expose
+their SQL messages. Concurrency responses also use a controlled message.
+
+## Release verification
+
+CI runs formatting, Release build and both test suites, then starts a dedicated Compose project
+with an empty volume and checks health, Swagger, seeded flights and `scripts/demo.ps1`. Logs and
+TRX results are retained; cleanup removes only that run's containers/volume. Personal Codex
+skills are optional tooling, not build prerequisites.
+
+Without Docker, set `AEROLINEAW_TEST_SQLSERVER` to a SQL Server/LocalDB connection string before
+`dotnet test`. The fixture uses only its server/credentials and creates uniquely named disposable
+databases (`AerolineaW_Tests_<guid>`, plus `AerolineaW_MigrationTests_<guid>` for the upgrade test).
+It never migrates or deletes the database named in the supplied string. Clear the variable to
+restore the default Testcontainers path. LocalDB success is not evidence that Compose works.
+
+The upgrade regression migrates the initial schema with an existing booking to the latest
+schema, checks history/counters and resells its cancelled seat. Do not rewrite InitialCreate.
+Rollback to the original unfiltered seat index cannot retain reused-seat history unchanged;
+do not silently delete bookings to make a downgrade succeed.
 
 ## Configuration
 

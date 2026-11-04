@@ -61,13 +61,15 @@ duplicada en cada llamador.
 | No se puede asignar una aeronave `InMaintenance` o `Retired` | `Flight.AssignAircraft` |
 | Una aeronave no puede tener vuelos solapados — incluyendo un margen de turnaround de 45 minutos | `FlightService` (requiere consulta, por eso no puede vivir en Domain) |
 | No se venden más reservas que `Aircraft.SeatCapacity` | `Flight.Book` |
-| Un asiento, una reserva | índice único en `(FlightId, Seat)` |
+| Un asiento, una reserva activa; se puede reutilizar tras cancelar | índice único filtrado en `(FlightId, Seat)` |
 | El equipaje total no puede superar `Aircraft.MaxPayloadKg` | `Flight.Book` |
 | Las reservas cierran 45 minutos antes de la salida programada | `Flight.Book` |
 | Transiciones de estado: `Scheduled → Boarding → InFlight → Landed`, con ramas laterales `Delayed`/`Cancelled` | `Flight.Board/Depart/Land/Delay/Cancel` |
 | El check-in abre 24 h y cierra 45 min antes de la salida | `Booking.CheckIn` |
 | Cancelar un vuelo cancela todas sus reservas activas | `Flight.Cancel` |
-| Cancelar una reserva libera el asiento de vuelta al vuelo | `Booking.Cancel` |
+| Cancelar una reserva antes del despegue libera asiento y equipaje; después se rechaza | `Booking.Cancel` |
+| Cambiar de aeronave debe respetar los asientos y el equipaje ya reservados | `Flight.AssignAircraft` |
+| La llegada real debe ser posterior al despegue real | `Flight.Land` |
 
 ### La que vale la pena observar: reservas concurrentes
 
@@ -80,19 +82,25 @@ concurrencia optimista real: la solicitud perdedora recibe `DbUpdateConcurrencyE
 capacidad contra lo que realmente está confirmado, en vez de asumir que la solicitud original
 estaba mal.
 
-`BookingsConcurrencyTests.ConcurrentBookings_ExactlySeatCapacitySucceed` dispara 12 solicitudes
-de reserva simultáneas contra una aeronave de 6 asientos y verifica que exactamente 6 tengan
-éxito — ni menos (un bug perdería silenciosamente una reserva válida) ni más (un bug vendería de
-más el vuelo).
+La prueba `ConcurrentBookings_NeverOversell_AndRemainingCapacityCanBeSold` dispara 12
+solicitudes simultáneas sobre una aeronave de 6 asientos y verifica que nunca se vendan más
+asientos que su capacidad. Los tres intentos del servidor pueden agotarse bajo contención aun
+cuando queden asientos: ese 409 indica que el cliente puede volver a intentar. La prueba también
+comprueba que la capacidad restante se pueda vender después. Otras pruebas sincronizan dos
+contextos antes de guardar para comprobar las carreras por el mismo asiento y el último asiento.
+
+`Booking` también tiene `rowversion`: un check-in basado en datos anteriores no puede sobrescribir
+una cancelación confirmada. Crear y reasignar vuelos usa una transacción `Serializable` para
+comprobar disponibilidad y guardar como una sola operación, con reintentos completos de EF Core.
 
 ## Stack técnico
 
-- **.NET 10** / ASP.NET Core, C# 13
+- **.NET 10** / ASP.NET Core, C#
 - **EF Core 10** sobre SQL Server, migraciones code-first
 - **FluentValidation** para validar la forma de los requests (campos vacíos, longitudes) — las reglas de negocio se quedan en Domain
 - **Mapster** para el mapeo entidad → DTO
 - **Serilog** para logging estructurado, **Asp.Versioning** (`/api/v1/...`), **Swashbuckle** para Swagger
-- **xUnit** — 82 tests unitarios puros sobre Domain, más una suite de integración con **Testcontainers** contra un SQL Server real (y descartable)
+- **xUnit** — 91 tests unitarios puros sobre Domain, más una suite de integración con **Testcontainers** contra un SQL Server real (y descartable)
 - **Docker Compose** para arrancar todo en un comando, **GitHub Actions** para CI
 
 ## Arranque rápido
@@ -134,28 +142,61 @@ dotnet test tests/AerolineaW.Domain.UnitTests
 dotnet test
 ```
 
-## Recorrido por la API
+## Recorrido reproducible por la API
 
-```bash
-# Crear un aeropuerto
-curl -X POST http://localhost:8080/api/v1/airports \
-  -H "Content-Type: application/json" \
-  -d '{"code":"MIA","name":"Miami International","city":"Miami","country":"United States","timeZoneId":"America/New_York"}'
+Con Docker Compose arrancado, ejecutá en PowerShell desde la raíz del repositorio:
 
-# Reservar un asiento
-curl -X POST http://localhost:8080/api/v1/flights/1/bookings \
-  -H "Content-Type: application/json" \
-  -d '{"passengerId":1,"seat":"14A","baggageWeightKg":15,"price":249.99}'
-
-# Buscar una reserva por su referencia de 6 caracteres — sin necesitar el id del vuelo
-curl http://localhost:8080/api/v1/bookings/by-reference/3F9K2X
+```powershell
+./scripts/demo.ps1
 ```
 
-Todo rechazo por regla de negocio vuelve como un cuerpo
-[RFC 7807](https://www.rfc-editor.org/rfc/rfc7807) `ProblemDetails` con el código de estado
-correcto (404 no encontrado, 409 conflicto de negocio, 400 validación) — nunca una excepción
-cruda, que es justo lo que hacía el `catch (Exception e) { return StatusCode(500, e); }` en cada
-acción de cada controller del proyecto original.
+Para el perfil local HTTP (`dotnet run --project src/AerolineaW.Api`):
+
+```powershell
+./scripts/demo.ps1 -BaseUrl http://localhost:5129
+```
+
+En Linux/macOS, instalá PowerShell y ejecutá `pwsh -File scripts/demo.ps1`.
+El script usa dos aeropuertos del seed y crea una aeronave, un pasajero y un vuelo para dentro de
+12 horas. Reserva `1A`, consulta la referencia devuelta por la API, hace check-in, cancela y vuelve
+a reservar ese asiento. Verifica el historial y los contadores, y devuelve los IDs y referencias
+reales de ambas reservas. Cada ejecución agrega sus propios datos de demostración.
+
+Los errores usan `ProblemDetails`: 400 para validación, 404 para recursos inexistentes y 409
+para reglas de negocio, concurrencia y conflictos esperados de unicidad o claves foráneas.
+Los fallos inesperados de persistencia devuelven 500 genérico y se registran en el servidor.
+
+## Verificación de la entrega
+
+```bash
+dotnet format --verify-no-changes
+dotnet build --configuration Release
+dotnet test --configuration Release
+```
+
+CI ejecuta ambas suites con Testcontainers, construye la imagen y arranca Compose con una base
+vacía. Comprueba `/health`, Swagger, vuelos sembrados y el mismo recorrido de PowerShell;
+guarda resultados y logs antes de eliminar exclusivamente los recursos de esa ejecución.
+La suite también prueba migrar una base con el esquema inicial y reservas existentes.
+
+Si Docker no está disponible, una instancia SQL Server existente puede ejecutar las pruebas:
+
+```powershell
+$env:AEROLINEAW_TEST_SQLSERVER = 'Server=(localdb)\MSSQLLocalDB;Integrated Security=true;TrustServerCertificate=true'
+dotnet test --configuration Release
+Remove-Item Env:AEROLINEAW_TEST_SQLSERVER
+```
+
+Se usan el servidor y las credenciales suministradas para crear bases `AerolineaW_Tests_<guid>`
+y `AerolineaW_MigrationTests_<guid>`, que se eliminan al terminar. Nunca se usa como destino la
+base indicada en la cadena. La cuenta necesita permiso para crear y eliminar esas bases.
+Esto comprueba integración con SQL Server; no demuestra que Docker o Compose funcionen.
+
+Las migraciones incrementales se aplican automáticamente solo en Development. En otros entornos,
+aplicarlas explícitamente con `dotnet ef database update --project src/AerolineaW.Infrastructure --connection "<connection-string>"`.
+Volver al esquema inicial exige resolver antes los asientos reutilizados: su índice original no
+admite dos reservas históricas para el mismo asiento. No se elimina historial automáticamente.
+Las skills personales de Codex no son necesarias para ejecutar ni verificar el proyecto.
 
 ## Decisiones de diseño que conviene conocer antes de leer el código
 
@@ -177,3 +218,8 @@ acción de cada controller del proyecto original.
 Autenticación/autorización quedó fuera de alcance — todos los endpoints están abiertos. Si esto
 avanzara, JWT con un rol `Admin` (gestiona flota/vuelos) y un rol `Customer` (reserva/hace
 check-in) sería la siguiente fase natural.
+
+Es una demostración de backend, sin pagos ni interfaz de usuario. El cliente suministra el precio;
+no existe un motor de tarifas. El asiento se valida por su formato y unicidad, sin mapa físico de
+cabina. La carga reservada modela únicamente el equipaje, no el peso total operativo del avión.
+Usá datos ficticios: los endpoints abiertos no son una plataforma para pasajeros reales.

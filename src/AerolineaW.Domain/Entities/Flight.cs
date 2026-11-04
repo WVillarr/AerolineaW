@@ -146,6 +146,11 @@ public sealed class Flight
             throw new FlightFullException(FlightNumber);
         }
 
+        if (aircraft.MaxPayloadKg < PayloadBookedKg)
+        {
+            throw new PayloadExceededException(FlightNumber);
+        }
+
         AircraftId = aircraft.Id;
         Aircraft = aircraft;
     }
@@ -204,6 +209,11 @@ public sealed class Flight
 
     public void Land(DateTime actualArrivalUtc)
     {
+        if (ActualDepartureUtc.HasValue && actualArrivalUtc <= ActualDepartureUtc.Value)
+        {
+            throw new InvalidFlightTransitionException("Actual arrival must be after actual departure.");
+        }
+
         TransitionTo(FlightStatus.InFlight, FlightStatus.Landed);
         ActualArrivalUtc = actualArrivalUtc;
     }

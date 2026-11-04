@@ -44,6 +44,9 @@ public sealed class Booking
 
     public DateTime? CheckedInAtUtc { get; private set; }
 
+    /// <summary>Guards against concurrent check-in and cancellation overwriting each other.</summary>
+    public byte[] RowVersion { get; private set; } = [];
+
     private Booking()
     {
         // Reserved for EF Core materialization.
@@ -100,6 +103,11 @@ public sealed class Booking
         if (Status == BookingStatus.Cancelled)
         {
             throw new InvalidBookingStatusException($"Booking {Reference} is already cancelled.");
+        }
+
+        if (Flight.Status is not (FlightStatus.Scheduled or FlightStatus.Delayed or FlightStatus.Boarding))
+        {
+            throw new InvalidBookingStatusException($"Booking {Reference} cannot be cancelled after departure.");
         }
 
         Flight.ReleaseSeat(BaggageWeightKg);

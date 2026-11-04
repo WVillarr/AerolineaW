@@ -32,4 +32,7 @@ public interface IApplicationDbContext
     /// its entities fresh instead of resubmitting the same stale <c>RowVersion</c>.
     /// </summary>
     void ClearChangeTracking();
+
+    /// <summary>Retries a complete serializable operation with fresh tracked entities.</summary>
+    Task<T> ExecuteSerializableAsync<T>(Func<CancellationToken, Task<T>> operation, CancellationToken cancellationToken = default);
 }

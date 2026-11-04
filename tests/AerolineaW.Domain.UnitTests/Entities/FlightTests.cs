@@ -77,6 +77,44 @@ public class FlightTests
         Assert.Throws<InvalidFlightTransitionException>(() => flight.AssignAircraft(TestFactory.CreateAircraft()));
     }
 
+    [Theory]
+    [InlineData(19, false)]
+    [InlineData(20, true)]
+    public void AssignAircraft_ValidatesExistingPayload(int capacity, bool succeeds)
+    {
+        var flight = TestFactory.CreateFlight(departureUtc: Departure, arrivalUtc: Arrival);
+        flight.Book(TestFactory.CreatePassenger(), new SeatNumber("1A"), 20m, 100m, Departure.AddDays(-2));
+        var original = flight.Aircraft;
+        var replacement = TestFactory.CreateAircraft(maxPayloadKg: capacity);
+
+        if (succeeds)
+        {
+            flight.AssignAircraft(replacement);
+            Assert.Same(replacement, flight.Aircraft);
+        }
+        else
+        {
+            Assert.Throws<PayloadExceededException>(() => flight.AssignAircraft(replacement));
+            Assert.Same(original, flight.Aircraft);
+        }
+
+        Assert.Equal(20m, flight.PayloadBookedKg);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(0)]
+    public void Land_NotAfterDeparture_LeavesFlightUnchanged(int minutes)
+    {
+        var flight = TestFactory.CreateFlight();
+        flight.Board();
+        flight.Depart(Departure);
+
+        Assert.Throws<InvalidFlightTransitionException>(() => flight.Land(Departure.AddMinutes(minutes)));
+        Assert.Equal(Enums.FlightStatus.InFlight, flight.Status);
+        Assert.Null(flight.ActualArrivalUtc);
+    }
+
     [Fact]
     public void Book_ExceedsSeatCapacity_ThrowsFlightFull()
     {

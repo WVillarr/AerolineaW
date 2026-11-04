@@ -85,4 +85,46 @@ public class BookingTests
 
         Assert.Throws<InvalidBookingStatusException>(booking.Cancel);
     }
+
+    [Theory]
+    [InlineData(FlightStatus.Scheduled)]
+    [InlineData(FlightStatus.Delayed)]
+    [InlineData(FlightStatus.Boarding)]
+    public void Cancel_BeforeDeparture_ReleasesCapacity(FlightStatus status)
+    {
+        var booking = CreateBooking(Departure);
+        if (status == FlightStatus.Delayed)
+        {
+            booking.Flight.Delay();
+        }
+        else if (status == FlightStatus.Boarding)
+        {
+            booking.Flight.Board();
+        }
+
+        booking.Cancel();
+
+        Assert.Equal(BookingStatus.Cancelled, booking.Status);
+        Assert.Equal(0, booking.Flight.SeatsBooked);
+        Assert.Equal(0m, booking.Flight.PayloadBookedKg);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Cancel_AfterDeparture_PreservesBookingAndCounters(bool landed)
+    {
+        var booking = CreateBooking(Departure);
+        booking.Flight.Board();
+        booking.Flight.Depart(Departure);
+        if (landed)
+        {
+            booking.Flight.Land(Departure.AddHours(2));
+        }
+
+        Assert.Throws<InvalidBookingStatusException>(booking.Cancel);
+        Assert.Equal(BookingStatus.Confirmed, booking.Status);
+        Assert.Equal(1, booking.Flight.SeatsBooked);
+        Assert.Equal(10m, booking.Flight.PayloadBookedKg);
+    }
 }

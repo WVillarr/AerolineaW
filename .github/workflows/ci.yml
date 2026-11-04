@@ -9,6 +9,9 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      COMPOSE_PROJECT_NAME: aerolineaw-ci-${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
       - name: Checkout
@@ -34,12 +37,34 @@ jobs:
       - name: Test
         run: dotnet test --no-build --configuration Release --logger "trx" --results-directory TestResults
 
-      - name: Upload test results
+      - name: Start Compose from an empty database
+        id: compose
+        run: |
+          export MSSQL_SA_PASSWORD="Ci-Aa1-$(openssl rand -hex 16)"
+          echo "MSSQL_SA_PASSWORD=$MSSQL_SA_PASSWORD" >> "$GITHUB_ENV"
+          docker compose up --build --detach --wait --wait-timeout 180
+          curl --fail --silent --show-error --retry 30 --retry-delay 2 --retry-all-errors http://localhost:8080/health
+          curl --fail --silent --show-error http://localhost:8080/swagger/v1/swagger.json > TestResults/swagger.json
+          curl --fail --silent --show-error http://localhost:8080/api/v1/flights > TestResults/seeded-flights.json
+          python3 -c 'import json; assert json.load(open("TestResults/seeded-flights.json"))["totalCount"] > 0'
+
+      - name: Run the documented booking walkthrough
+        shell: pwsh
+        run: ./scripts/demo.ps1 | ConvertTo-Json | Set-Content TestResults/demo.json
+
+      - name: Collect Compose logs
+        if: always() && steps.compose.outcome != 'skipped'
+        run: |
+          mkdir -p TestResults
+          docker compose logs --no-color > TestResults/compose.log
+
+      - name: Remove this run's containers and database volume
+        if: always() && steps.compose.outcome != 'skipped'
+        run: docker compose down --volumes --remove-orphans
+
+      - name: Upload verification evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results
+          name: verification-results
           path: TestResults
-
-      - name: Build Docker image
-        run: docker build -t aerolineaw-api .

@@ -17,6 +17,8 @@ namespace AerolineaW.Api.IntegrationTests;
 /// </summary>
 internal static class TestDataBuilder
 {
+    private static int _airportSequence;
+
     public static JsonSerializerOptions JsonOptions { get; } = new(JsonSerializerDefaults.Web)
     {
         Converters = { new JsonStringEnumConverter() },
@@ -24,7 +26,9 @@ internal static class TestDataBuilder
 
     public static async Task<AirportResponse> CreateAirportAsync(HttpClient client)
     {
-        var code = RandomLetters(3);
+        // The three-letter namespace is small: random codes collide as the suite grows.
+        var sequence = Interlocked.Increment(ref _airportSequence);
+        var code = new string([(char)('A' + (sequence / 676 % 26)), (char)('A' + (sequence / 26 % 26)), (char)('A' + (sequence % 26))]);
         var response = await client.PostAsJsonAsync(
             "/api/v1/airports", new CreateAirportRequest(code, $"{code} Airport", "City", "Country", "America/New_York"));
         response.EnsureSuccessStatusCode();
